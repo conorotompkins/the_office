@@ -45,11 +45,11 @@ df_cast_long <- df_cast %>%
          season_line_count = sum(line_count, na.rm = TRUE),
          lines_per_episode = season_line_count / season_cast_count) %>% 
   ungroup() %>% 
-  mutate(cast_name = reorder_within(x = cast_name, by = season_cast_count, within = season))
+  mutate(cast_name = reorder_within(x = cast_name, by = season_line_count, within = season))
 
 df_cast_long %>% 
-  filter(season_cast_count > 0) %>% 
-  filter(season == 3) %>% 
+  filter(season_cast_count > 1) %>% 
+  filter(season == 5) %>% 
   ggplot(aes(episode, cast_name, fill = line_count)) +
     geom_tile(color = "grey") +
     scale_fill_viridis_c() +
