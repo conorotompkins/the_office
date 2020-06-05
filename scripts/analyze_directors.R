@@ -48,7 +48,7 @@ df_directors_long <- df_directors %>%
 df_directors_long %>% 
   filter(season_director_count > 0) %>% 
   ggplot(aes(episode, director_name, fill = director_flag)) +
-    geom_tile() +
+    geom_tile(color = "grey") +
     scale_fill_viridis_d() +
     scale_x_continuous(expand = c(0,0)) +
     scale_y_reordered(expand = c(0,0)) +
