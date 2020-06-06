@@ -16,7 +16,7 @@ df_directors <- df %>%
   distinct(season, episode, director) %>% 
   separate(director, sep = ";", into = str_c("director", 1:2, sep = "_")) %>% 
   pivot_longer(cols = contains("director"), names_to = "director", values_to = "director_name") %>% 
-  select(-director) %>% 
+  #select(-director) %>% 
   filter(!is.na(director_name))
 
 df_directors %>% 
@@ -37,15 +37,15 @@ df_directors %>%
 
 df_directors_long <- df_directors %>% 
   pivot_wider(id_cols = c(season, episode), names_from = director_name, names_prefix = "director_", values_from = director_name) %>% 
-  pivot_longer(cols = contains("director"), names_to = "director_name", values_to = "director_flag") %>% 
-  mutate(director_flag = !is.na(director_flag),
+  pivot_longer(cols = contains("director"), names_to = "director_name", values_to = "indicator_flag") %>% 
+  mutate(indicator_flag = !is.na(indicator_flag),
          director_name = str_remove(director_name, "director_")) %>% 
   group_by(season, director_name) %>% 
-  mutate(season_director_count = sum(director_flag == TRUE)) %>% 
-  ungroup() %>% 
-  mutate(director_name = reorder_within(x = director_name, by = season_director_count, within = season))
+  mutate(season_director_count = sum(indicator_flag == TRUE)) %>% 
+  ungroup()
 
 df_directors_long %>% 
+  mutate(director_name = reorder_within(x = director_name, by = season_director_count, within = season)) %>% 
   filter(season_director_count > 0) %>% 
   ggplot(aes(episode, director_name, fill = director_flag)) +
     geom_tile(color = "grey") +
@@ -53,3 +53,6 @@ df_directors_long %>%
     scale_x_continuous(expand = c(0,0)) +
     scale_y_reordered(expand = c(0,0)) +
     facet_wrap(~season, scales = "free")
+
+df_directors_long %>% 
+  filter(director_flag == TRUE)
