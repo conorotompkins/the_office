@@ -23,8 +23,7 @@ df
 
 df %>% 
   filter(str_detect(character, "David")) %>% 
-  select(season, episode, character, text) %>% 
-  View()
+  select(season, episode, character, text)
 
 df_episode_list <- df %>% 
   distinct(season, episode) %>% 
@@ -100,7 +99,7 @@ df_cast <- df %>%
 
 df_top_cast <- df_cast %>% 
   count(character, sort = TRUE) %>% 
-  filter(n >= 10) %>% 
+  filter(n >= 15) %>% 
   select(character)
 
 df_top_cast
@@ -139,25 +138,35 @@ office_rec <- recipe(imdb_rating ~ ., data = office_train) %>%
   step_zv(all_numeric(), -all_outcomes()) %>%
   step_normalize(all_numeric(), -all_outcomes())
 
+office_rec
+
 office_prep <- office_rec %>%
   prep(strings_as_factors = FALSE)
 
+office_prep
+
 #workflow
-lasso_spec <- linear_reg(penalty = 0.1, mixture = 0) %>%
+ridge_spec <- linear_reg(penalty = 0.1, mixture = 0) %>%
   set_engine("glmnet")
+
+ridge_spec
 
 wf <- workflow() %>%
   add_recipe(office_rec)
 
-lasso_fit <- wf %>%
-  add_model(lasso_spec) %>%
+wf
+
+ridge_fit <- wf %>%
+  add_model(ridge_spec) %>%
   fit(data = office_train)
 
-lasso_fit %>%
+ridge_fit
+
+ridge_fit %>%
   pull_workflow_fit() %>%
   tidy()
 
-#tune lasso parameters
+#tune ridge parameters
 
 office_boot <- bootstraps(office_train, strata = season)
 
@@ -166,17 +175,45 @@ tune_spec <- linear_reg(penalty = tune(), mixture = 0) %>%
 
 lambda_grid <- grid_regular(penalty(), levels = 50)
 
-lasso_grid <- tune_grid(
+
+ridge_grid <- tune_grid(
   wf %>% add_model(tune_spec),
   resamples = office_boot,
   grid = lambda_grid
 )
 
+ridge_grid
+
 #analyze metrics
-lasso_grid %>%
+ridge_grid %>%
   collect_metrics()
 
-lasso_grid %>%
+ridge_grid %>%
+  collect_metrics() %>% 
+  select(penalty, .metric, mean) %>% 
+  pivot_wider(id_cols = penalty, names_from = .metric, values_from = mean) %>% 
+  ggplot(aes(rmse, rsq)) +
+    geom_jitter(alpha = .1)
+
+ridge_grid %>%
+  collect_metrics() %>% 
+  select(penalty, .metric, mean) %>% 
+  ggplot(aes(penalty, mean, color = .metric)) +
+    geom_line()
+
+#finalize workflow
+#select best model
+ridge_grid %>% 
+  unnest(.metrics) %>% 
+  select(penalty, .metric, .estimate) %>% 
+  filter(.metric == "rmse") %>% 
+  filter(.estimate == min(.estimate))
+
+
+lowest_rmse <- ridge_grid %>%
+  select_best("rmse", maximize = FALSE)
+
+ridge_grid %>%
   collect_metrics() %>%
   ggplot(aes(penalty, mean, color = .metric, fill = .metric)) +
   geom_ribbon(aes(
@@ -186,23 +223,13 @@ lasso_grid %>%
   alpha = 0.5
   ) +
   geom_line(size = 1.5) +
+  geom_vline(xintercept = pull(lowest_rmse), linetype = 2) +
   facet_wrap(~.metric, scales = "free", nrow = 2) +
   scale_x_log10() +
+  labs(title = "Ridge") +
   theme(legend.position = "none")
 
-#finalize workflow
-#select best model
-lasso_grid %>% 
-  unnest(.metrics) %>% 
-  select(penalty, .metric, .estimate) %>% 
-  filter(.metric == "rmse") %>% 
-  filter(.estimate == min(.estimate))
-
-
-lowest_rmse <- lasso_grid %>%
-  select_best("rmse", maximize = FALSE)
-
-final_lasso <- finalize_workflow(
+final_ridge <- finalize_workflow(
   wf %>% add_model(tune_spec),
   lowest_rmse
 )
@@ -211,7 +238,7 @@ final_lasso <- finalize_workflow(
 #analyze variables
 library(vip)
 
-final_lasso %>% 
+final_ridge %>% 
   fit(office_train) %>% 
   predict(office_train) %>% 
   bind_cols(office_train) %>% 
@@ -220,21 +247,24 @@ final_lasso %>%
     geom_point(alpha = .2) +
     geom_smooth()
 
-final_lasso %>%
+final_ridge %>%
   fit(office_train) %>%
   pull_workflow_fit() %>% 
-  vi(lambda = lowest_rmse$penalty)
+  vi(lambda = lowest_rmse$penalty) %>% 
+  View()
 
 
-final_lasso %>%
+final_ridge %>%
   fit(office_train) %>%
   pull_workflow_fit() %>%
   vi(lambda = lowest_rmse$penalty) %>%
+  #filter(str_detect(Variable, "writer|director|cast")) %>% 
+  mutate(Variable = case_when(str_detect(Variable, "writer|director|cast") ~ Variable,
+                          TRUE ~ str_c("other_", Variable))) %>% 
   mutate(
     Importance = abs(Importance),
     Variable = fct_reorder(Variable, Importance)
   ) %>%
-  filter(str_detect(Variable, "writer|director|cast")) %>% 
   separate(Variable, sep = "_", into = c("role", "person"), extra = "merge") %>% 
   mutate(person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
   #filter(Importance > .05) %>% 
@@ -249,7 +279,14 @@ final_lasso %>%
 
 #analyze test data
 last_fit(
-  final_lasso,
+  final_ridge,
   office_split
 ) %>%
   collect_metrics()
+
+# # A tibble: 2 x 3
+# .metric .estimator .estimate
+# <chr>   <chr>          <dbl>
+#   1 rmse    standard       0.460
+# 2 rsq     standard       0.227
+

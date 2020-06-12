@@ -45,7 +45,7 @@ df_directors <- df_directors %>%
          director = str_replace_all(director, "\\-", "_"),
          director = str_replace_all(director, " ", "_")) %>% 
   add_count(director) %>% 
-  filter(n > 4) %>% 
+  filter(n > 2) %>% 
   select(-n)
 
 df_directors <- df_directors %>% 
@@ -60,7 +60,7 @@ df_writers <- df %>%
   distinct(season, episode, writer) %>% 
   separate_rows(writer, sep = ";") %>% 
   add_count(writer) %>% 
-  filter(n > 4)
+  filter(n > 2)
 
 df_writers <- df_writers %>% 
   mutate(writer = str_remove_all(writer, "\\."),
@@ -172,21 +172,7 @@ lasso_grid <- tune_grid(
 lasso_grid %>%
   collect_metrics()
 
-lasso_grid %>%
-  collect_metrics() %>%
-  ggplot(aes(penalty, mean, color = .metric, fill = .metric)) +
-    geom_ribbon(aes(
-      ymin = mean - std_err,
-      ymax = mean + std_err
-    ),
-    alpha = 0.5
-    ) +
-    geom_line(size = 1.5) +
-    facet_wrap(~.metric, scales = "free", nrow = 2) +
-    scale_x_log10() +
-    theme(legend.position = "none")
 
-#finalize workflow
 #select best model
 lasso_grid %>% 
   unnest(.metrics) %>% 
@@ -194,10 +180,28 @@ lasso_grid %>%
   filter(.metric == "rmse") %>% 
   filter(.estimate == min(.estimate))
 
-
 lowest_rmse <- lasso_grid %>%
   select_best("rmse", maximize = FALSE)
 
+#graph metrics
+lasso_grid %>%
+  collect_metrics() %>%
+  ggplot(aes(penalty, mean, color = .metric, fill = .metric)) +
+  geom_ribbon(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  geom_vline(xintercept = pull(lowest_rmse), linetype = 2) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  labs(title = "LASSO") +
+  theme(legend.position = "none")
+
+
+#finalize workflow
 final_lasso <- finalize_workflow(
   wf %>% add_model(tune_spec),
   lowest_rmse
@@ -212,8 +216,8 @@ final_lasso %>%
   predict(office_train) %>% 
   bind_cols(office_train) %>% 
   ggplot(aes(imdb_rating, .pred)) +
-    geom_abline() +
-    geom_point() +
+    geom_abline(linetype = 2) +
+    geom_point(alpha = .2) +
     geom_smooth()
 
 final_lasso %>%
@@ -226,21 +230,23 @@ final_lasso %>%
   fit(office_train) %>%
   pull_workflow_fit() %>%
   vi(lambda = lowest_rmse$penalty) %>%
+  #filter(str_detect(Variable, "writer|director|cast")) %>% 
+  mutate(Variable = case_when(str_detect(Variable, "writer|director|cast") ~ Variable,
+                              TRUE ~ str_c("other_", Variable))) %>% 
   mutate(
     Importance = abs(Importance),
     Variable = fct_reorder(Variable, Importance)
   ) %>%
-  filter(str_detect(Variable, "writer|director|cast")) %>% 
   separate(Variable, sep = "_", into = c("role", "person"), extra = "merge") %>% 
   mutate(person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
   #filter(Importance > .05) %>% 
   ggplot(aes(x = Importance, y = person, fill = Sign)) +
-    geom_col(color = "black") +
-    facet_wrap(~role, scales = "free_y") +
-    scale_fill_viridis_d() +
-    scale_x_continuous(expand = c(0, 0)) +
-    scale_y_reordered() +
-    labs(y = NULL)
+  geom_col(color = "black") +
+  facet_wrap(~role, scales = "free_y") +
+  scale_fill_viridis_d() +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_reordered() +
+  labs(y = NULL)
 
 
 #analyze test data
@@ -249,3 +255,9 @@ last_fit(
   office_split
 ) %>%
   collect_metrics()
+
+# # A tibble: 2 x 3
+# .metric .estimator .estimate
+# <chr>   <chr>          <dbl>
+#   1 rmse    standard       0.503
+# 2 rsq     standard       0.147
