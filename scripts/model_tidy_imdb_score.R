@@ -7,6 +7,7 @@ library(schrute)
 library(tidyr)
 library(glmnet)
 library(tidymodels)
+library(vip)
 
 options(scipen = 999, digits = 2)
 
