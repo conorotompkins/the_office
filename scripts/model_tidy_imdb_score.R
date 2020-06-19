@@ -22,11 +22,12 @@ df <- schrute::theoffice %>%
 
 df
 
+#for IDing episodes
 df_episode_list <- df %>% 
   distinct(season, episode) %>% 
   mutate(episode_id = str_c(season, episode, sep = "_"))
 
-#imdb_rating
+#imdb_ratings and flags for season premiers and finales
 df_imdb <- df %>% 
   distinct(season, episode, imdb_rating) %>% 
   group_by(season) %>% 
@@ -38,8 +39,34 @@ df_imdb <- df %>%
 #directors
 df_directors <- df %>% 
   distinct(season, episode, director) %>% 
-  separate_rows(director, sep = ";") %>% 
-  mutate(director = str_c("director", director, sep = "_"))
+  separate_rows(director, sep = ";")
+
+#clean up
+df_directors %>% 
+  distinct(director) %>% 
+  arrange(director)
+
+df_director_fix <- tibble(director_good = c("Charles McDougall",
+                                            "Claire Scanlon",
+                                            "Greg Daniels",
+                                            "Ken Whittingham",
+                                            "Paul Lieberstein"),
+                          director_bad = c("Charles McDougal",
+                                           "Claire Scanlong",
+                                           "Greg Daneils",
+                                           "Ken Wittingham",
+                                           "Paul Lieerstein"))
+
+df_directors %>% 
+  left_join(df_director_fix, by = c("director" = "director_bad")) %>% 
+  filter(!is.na(director_good))
+
+df_directors <- df_directors %>% 
+  left_join(df_director_fix, by = c("director" = "director_bad")) %>% 
+  mutate(director = case_when(!is.na(director_good) ~ director_good,
+                              is.na(director_good) ~ director)) %>% 
+  mutate(director = str_c("director", director, sep = "_")) %>% 
+  select(-director_good)
 
 df_directors <- df_directors %>%  
   mutate(director = str_remove_all(director, "\\."),
@@ -162,12 +189,10 @@ tune_spec <- linear_reg(penalty = tune(), mixture = 1) %>%
 
 lambda_grid <- grid_regular(penalty(), levels = 50)
 
-
 lasso_grid <- tune_grid(
   wf %>% add_model(tune_spec),
   resamples = office_boot,
-  grid = lambda_grid
-)
+  grid = lambda_grid)
 
 #analyze metrics
 lasso_grid %>%
@@ -182,18 +207,15 @@ lasso_grid %>%
   filter(.estimate == min(.estimate))
 
 lowest_rmse <- lasso_grid %>%
-  select_best("rmse", maximize = FALSE)
+  select_best("rmse")
 
 #graph metrics
 lasso_grid %>%
   collect_metrics() %>%
   ggplot(aes(penalty, mean, color = .metric, fill = .metric)) +
-  geom_ribbon(aes(
-    ymin = mean - std_err,
-    ymax = mean + std_err
-  ),
-  alpha = 0.5
-  ) +
+  geom_ribbon(aes(ymin = mean - std_err,
+                  ymax = mean + std_err),
+              alpha = 0.5) +
   geom_line(size = 1.5) +
   geom_vline(xintercept = pull(lowest_rmse), linetype = 2) +
   facet_wrap(~.metric, scales = "free", nrow = 2) +
@@ -203,10 +225,7 @@ lasso_grid %>%
 
 
 #finalize workflow
-final_lasso <- finalize_workflow(
-  wf %>% add_model(tune_spec),
-  lowest_rmse
-)
+final_lasso <- finalize_workflow(wf %>% add_model(tune_spec), lowest_rmse)
 
 
 #analyze variables
@@ -219,7 +238,8 @@ final_lasso %>%
   ggplot(aes(imdb_rating, .pred)) +
     geom_abline(linetype = 2) +
     geom_point(alpha = .2) +
-    geom_smooth()
+    geom_smooth() +
+    coord_equal()
 
 final_lasso %>%
   fit(office_train) %>%
@@ -231,30 +251,21 @@ final_lasso %>%
   fit(office_train) %>%
   pull_workflow_fit() %>%
   vi(lambda = lowest_rmse$penalty) %>%
-  #filter(str_detect(Variable, "writer|director|cast")) %>% 
   mutate(Variable = case_when(str_detect(Variable, "writer|director|cast") ~ Variable,
                               TRUE ~ str_c("other_", Variable))) %>% 
-  mutate(
-    Importance = abs(Importance),
-    Variable = fct_reorder(Variable, Importance)
-  ) %>%
+  mutate(Variable = fct_reorder(Variable, Importance)) %>%
   separate(Variable, sep = "_", into = c("role", "person"), extra = "merge") %>% 
   mutate(person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
-  #filter(Importance > .05) %>% 
-  ggplot(aes(x = Importance, y = person, fill = Sign)) +
+  ggplot(aes(x = Importance, y = person, fill = Importance)) +
   geom_col(color = "black") +
   facet_wrap(~role, scales = "free_y") +
-  scale_fill_viridis_d() +
-  scale_x_continuous(expand = c(0, 0)) +
+  scale_fill_viridis_c() +
   scale_y_reordered() +
   labs(y = NULL)
 
 
 #analyze test data
-last_fit(
-  final_lasso,
-  office_split
-) %>%
+last_fit(final_lasso, office_split) %>%
   collect_metrics()
 
 # # A tibble: 2 x 3
