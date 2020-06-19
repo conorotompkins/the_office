@@ -104,7 +104,30 @@ df_writers %>%
   count(season, episode, sort = TRUE)
 
 #cast
-df_cast <- df %>%
+df_cast <- df %>% 
+  select(season, episode, character)
+
+df_cast <- df_cast %>% 
+  select(season, episode, character) %>% 
+  mutate(character = case_when(season == 7 & episode == 18 & character == "Todd" ~ "Todd Packer",
+                               TRUE ~ character)) %>% 
+  mutate(character = case_when(season == 7 & episode == 14 & character == "David" ~ character,
+                               character == "David" ~ "David Wallace",
+                               TRUE ~ character)) %>% 
+  mutate(character = case_when(character == "Deangelo" ~ "DeAngelo",
+                               TRUE ~ character))
+# df %>% 
+#   select(season, episode, character, text) %>% 
+#   filter(character == "David") %>% 
+#   View()
+# 
+# df_cast %>% 
+#   count(character, sort = TRUE) %>% 
+#   arrange(character, -n) %>% 
+#   filter(n >= 20) %>% 
+#   View()
+
+df_cast <- df_cast %>%
   mutate(character = str_replace_all(character, " & ", " and "),
          character = str_replace_all(character, "/", " and "),
          character = str_replace_all(character, ",", " and "),
@@ -255,7 +278,8 @@ final_lasso %>%
                               TRUE ~ str_c("other_", Variable))) %>% 
   mutate(Variable = fct_reorder(Variable, Importance)) %>%
   separate(Variable, sep = "_", into = c("role", "person"), extra = "merge") %>% 
-  mutate(person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
+  mutate(person = str_replace_all(person, "_", " "),
+         person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
   ggplot(aes(x = Importance, y = person, fill = Importance)) +
   geom_col(color = "black") +
   facet_wrap(~role, scales = "free_y") +
@@ -263,13 +287,6 @@ final_lasso %>%
   scale_y_reordered() +
   labs(y = NULL)
 
-
 #analyze test data
 last_fit(final_lasso, office_split) %>%
   collect_metrics()
-
-# # A tibble: 2 x 3
-# .metric .estimator .estimate
-# <chr>   <chr>          <dbl>
-#   1 rmse    standard       0.503
-# 2 rsq     standard       0.147
