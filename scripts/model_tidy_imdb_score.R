@@ -176,7 +176,7 @@ office_prep <- office_rec %>%
   prep(strings_as_factors = FALSE)
 
 #workflow
-#tune lasso parameters
+#tune ridge parameters
 
 wf <- workflow() %>%
   add_recipe(office_rec)
@@ -194,7 +194,7 @@ ridge_grid <- tune_grid(
   grid = lambda_grid)
 
 #analyze metrics
-lasso_grid %>%
+ridge_grid %>%
   collect_metrics()
 
 
@@ -218,7 +218,7 @@ ridge_grid %>%
 
 
 #finalize workflow
-final_lasso <- finalize_workflow(wf %>% add_model(tune_spec), lowest_rmse)
+final_ridge <- finalize_workflow(wf %>% add_model(tune_spec), lowest_rmse)
 
 
 final_ridge %>% 
@@ -273,5 +273,5 @@ df_vi %>%
   filter(person == "Dwight" | person == "Rainn Wilson")
 
 #analyze test data
-last_fit(final_lasso, office_split) %>%
+last_fit(final_ridge, office_split) %>%
   collect_metrics()
