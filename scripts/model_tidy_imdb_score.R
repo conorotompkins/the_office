@@ -36,6 +36,8 @@ df_imdb <- df %>%
   ungroup() %>% 
   mutate(across(contains("flag"), as.numeric))
 
+glimpse(df_imdb)
+
 #directors
 df_directors <- df %>% 
   distinct(season, episode, director) %>% 
@@ -57,10 +59,6 @@ df_director_fix <- tibble(director_good = c("Charles McDougall",
                                            "Ken Wittingham",
                                            "Paul Lieerstein"))
 
-df_directors %>% 
-  left_join(df_director_fix, by = c("director" = "director_bad")) %>% 
-  filter(!is.na(director_good))
-
 df_directors <- df_directors %>% 
   left_join(df_director_fix, by = c("director" = "director_bad")) %>% 
   mutate(director = case_when(!is.na(director_good) ~ director_good,
@@ -81,7 +79,8 @@ df_directors <- df_directors %>%
   pivot_wider(id_cols = c(season, episode), names_from = director, values_from = flag, values_fill = list(flag = 0))
 
 df_directors %>% 
-  count(season, episode, sort = TRUE)
+  select(1:20) %>% 
+  glimpse()
 
 #writers
 df_writers <- df %>% 
@@ -101,33 +100,21 @@ df_writers <- df_writers %>%
   pivot_wider(id_cols = c(season, episode), names_from = writer, values_from = flag, values_fill = list(flag = 0))
 
 df_writers %>% 
-  count(season, episode, sort = TRUE)
+  select(1:20) %>% 
+  glimpse()
 
 #cast
-df_cast <- df %>% 
-  select(season, episode, character)
-
-df_cast <- df_cast %>% 
+df_characters <- df %>% 
   select(season, episode, character) %>% 
   mutate(character = case_when(season == 7 & episode == 18 & character == "Todd" ~ "Todd Packer",
                                TRUE ~ character)) %>% 
   mutate(character = case_when(season == 7 & episode == 14 & character == "David" ~ character,
                                character == "David" ~ "David Wallace",
                                TRUE ~ character)) %>% 
-  mutate(character = case_when(character == "Deangelo" ~ "DeAngelo",
+  mutate(character = case_when(character == "DeAngelo" ~ "Deangelo",
                                TRUE ~ character))
-# df %>% 
-#   select(season, episode, character, text) %>% 
-#   filter(character == "David") %>% 
-#   View()
-# 
-# df_cast %>% 
-#   count(character, sort = TRUE) %>% 
-#   arrange(character, -n) %>% 
-#   filter(n >= 20) %>% 
-#   View()
 
-df_cast <- df_cast %>%
+df_characters <- df_characters %>%
   mutate(character = str_replace_all(character, " & ", " and "),
          character = str_replace_all(character, "/", " and "),
          character = str_replace_all(character, ",", " and "),
@@ -140,27 +127,25 @@ df_cast <- df_cast %>%
          character = str_remove_all(character, "\\]"),
          character = str_remove_all(character, "\\("),
          character = str_remove_all(character, "\\)"),
-         character = str_replace_all(character, " ", "_")
-  ) %>%
+         character = str_replace_all(character, " ", "_")) %>%
   count(season, episode, character, name = "line_count")
 
-df_top_cast <- df_cast %>% 
+df_top_characters <- df_characters %>% 
   count(character, sort = TRUE) %>% 
   filter(n >= 20) %>% 
   select(character)
 
-df_top_cast
-
-df_cast_main <- df_cast %>% 
-  semi_join(df_top_cast) %>% 
+df_characters_main <- df_characters %>% 
+  semi_join(df_top_characters) %>% 
   pivot_wider(id_cols = c(season, episode), 
               names_from = character, 
               names_prefix = "cast_", 
               values_from = line_count, 
               values_fill = list(line_count = 0))
 
-df_cast_main %>%
-  count(season, episode, sort = TRUE)
+df_characters_main %>% 
+  select(1:20) %>% 
+  glimpse()
 
 #model
 ##prepare
@@ -168,13 +153,15 @@ df_cast_main %>%
 df_office <- df_imdb %>% 
   left_join(df_directors) %>% 
   left_join(df_writers) %>% 
-  left_join(df_cast_main) %>% 
+  left_join(df_characters_main) %>% 
   mutate(episode_id = str_c(season, episode, sep = "_")) %>% 
   mutate(across(contains("director"), coalesce, 0),
          across(contains("writer"), coalesce, 0)) %>% 
   select(-episode)
 
-glimpse(df_office)
+df_office %>% 
+  select(1:20) %>% 
+  glimpse()
 
 office_split <- initial_split(df_office, strata = season)
 office_train <- training(office_split)
@@ -189,30 +176,19 @@ office_prep <- office_rec %>%
   prep(strings_as_factors = FALSE)
 
 #workflow
-lasso_spec <- linear_reg(penalty = 0.1, mixture = 1) %>%
-  set_engine("glmnet")
+#tune lasso parameters
 
 wf <- workflow() %>%
   add_recipe(office_rec)
 
-lasso_fit <- wf %>%
-  add_model(lasso_spec) %>%
-  fit(data = office_train)
-
-lasso_fit %>%
-  pull_workflow_fit() %>%
-  tidy()
-
-#tune lasso parameters
-
 office_boot <- bootstraps(office_train, strata = season)
 
-tune_spec <- linear_reg(penalty = tune(), mixture = 1) %>%
+tune_spec <- linear_reg(penalty = tune(), mixture = 0) %>%
   set_engine("glmnet")
 
 lambda_grid <- grid_regular(penalty(), levels = 50)
 
-lasso_grid <- tune_grid(
+ridge_grid <- tune_grid(
   wf %>% add_model(tune_spec),
   resamples = office_boot,
   grid = lambda_grid)
@@ -223,17 +199,11 @@ lasso_grid %>%
 
 
 #select best model
-lasso_grid %>% 
-  unnest(.metrics) %>% 
-  select(penalty, .metric, .estimate) %>% 
-  filter(.metric == "rmse") %>% 
-  filter(.estimate == min(.estimate))
-
-lowest_rmse <- lasso_grid %>%
+owest_rmse <- ridge_grid %>%
   select_best("rmse")
 
 #graph metrics
-lasso_grid %>%
+ridge_grid %>%
   collect_metrics() %>%
   ggplot(aes(penalty, mean, color = .metric, fill = .metric)) +
   geom_ribbon(aes(ymin = mean - std_err,
@@ -243,7 +213,7 @@ lasso_grid %>%
   geom_vline(xintercept = pull(lowest_rmse), linetype = 2) +
   facet_wrap(~.metric, scales = "free", nrow = 2) +
   scale_x_log10() +
-  labs(title = "LASSO") +
+  labs(title = "Ridge regression lambda values") +
   theme(legend.position = "none")
 
 
@@ -251,26 +221,33 @@ lasso_grid %>%
 final_lasso <- finalize_workflow(wf %>% add_model(tune_spec), lowest_rmse)
 
 
-#analyze variables
-library(vip)
-
-final_lasso %>% 
+final_ridge %>% 
   fit(office_train) %>% 
   predict(office_train) %>% 
   bind_cols(office_train) %>% 
   ggplot(aes(imdb_rating, .pred)) +
-    geom_abline(linetype = 2) +
-    geom_point(alpha = .2) +
-    geom_smooth() +
-    coord_equal()
+  geom_abline(linetype = 2) +
+  geom_point(alpha = .2) +
+  geom_smooth() +
+  coord_equal() +
+  labs(x = "IMDB rating",
+       y = "Predicted rating")
 
-final_lasso %>%
-  fit(office_train) %>%
-  pull_workflow_fit() %>% 
-  vi(lambda = lowest_rmse$penalty)
+final_ridge %>% 
+  fit(office_train) %>% 
+  predict(office_train) %>% 
+  bind_cols(office_train) %>% 
+  separate(episode_id, into = c("season", "episode"), sep = "_") %>% 
+  mutate(.resid = imdb_rating - .pred) %>% 
+  select(season, episode, .resid) %>% 
+  ggplot(aes(season, .resid)) +
+  geom_boxplot() +
+  geom_hline(yintercept = 0, linetype = 2, color = "red") +
+  labs(y = "Residual",
+       title = "Actual minus predicted rating")
 
-
-final_lasso %>%
+#analyze variables
+df_vi <- final_ridge %>%
   fit(office_train) %>%
   pull_workflow_fit() %>%
   vi(lambda = lowest_rmse$penalty) %>%
@@ -278,14 +255,22 @@ final_lasso %>%
                               TRUE ~ str_c("other_", Variable))) %>% 
   mutate(Variable = fct_reorder(Variable, Importance)) %>%
   separate(Variable, sep = "_", into = c("role", "person"), extra = "merge") %>% 
-  mutate(person = str_replace_all(person, "_", " "),
-         person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
+  mutate(person = str_replace_all(person, "_", " "))
+
+df_vi %>% 
+  mutate(person = tidytext::reorder_within(x = person, by = Importance, within = role)) %>% 
   ggplot(aes(x = Importance, y = person, fill = Importance)) +
   geom_col(color = "black") +
   facet_wrap(~role, scales = "free_y") +
   scale_fill_viridis_c() +
   scale_y_reordered() +
   labs(y = NULL)
+
+df_vi %>%  
+  filter(person == "Greg Daniels")
+
+df_vi %>% 
+  filter(person == "Dwight" | person == "Rainn Wilson")
 
 #analyze test data
 last_fit(final_lasso, office_split) %>%
